@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>US Racial Minority Concentration by County</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson@3/dist/topojson.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/simpleheat@0.4.0/simpleheat.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #111827;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header { padding: 12px 24px; background: #1e2a3a; border-bottom: 1px solid #2d3f55; flex-shrink: 0; }
+    header h1 { font-size: 1.15rem; font-weight: 600; letter-spacing: -0.015em; }
+    header p  { font-size: 0.75rem; color: #6b8299; margin-top: 2px; }
+
+    #controls {
+      padding: 8px 16px;
+      background: #1e2a3a;
+      border-bottom: 1px solid #2d3f55;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    #controls label { font-size: 0.8rem; color: #94a3b8; white-space: nowrap; }
+    #controls select {
+      background: #0f1d2e; color: #d0e4f0; border: 1px solid #2d4a6a;
+      padding: 5px 10px; border-radius: 5px; font-size: 0.8rem; cursor: pointer; outline: none;
+    }
+    #controls select:focus { border-color: #3b82f6; }
+
+    .ctrl-divider { width: 1px; height: 20px; background: #2d3f55; margin: 0 2px; flex-shrink: 0; }
+
+    .overlay-toggle {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.78rem; color: #94a3b8; cursor: pointer; user-select: none;
+      padding: 4px 9px; border: 1px solid #2d4a6a; border-radius: 5px;
+      transition: border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    .overlay-toggle input { display: none; }
+    .overlay-toggle:hover { border-color: #64748b; color: #cbd5e1; }
+    .overlay-toggle.active-popeyes { border-color: #f97316 !important; color: #fed7aa !important; }
+    .overlay-toggle.active-heat    { border-color: #ef4444 !important; color: #fca5a5 !important; }
+
+    .swatch {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+      opacity: 0.5; transition: opacity 0.2s;
+    }
+    .active-popeyes .swatch-popeyes,
+    .active-heat    .swatch-heat { opacity: 1; }
+    .swatch-popeyes { background: #f97316; }
+    .swatch-heat    { background: linear-gradient(90deg,#3b82f6,#22c55e,#f59e0b,#ef4444); }
+
+    #popeyes-count  { font-size: 0.7rem; color: #f97316; }
+    #popeyes-spinner { display: none; width: 10px; height: 10px; border: 2px solid #2d3f55; border-top-color: #f97316; border-radius: 50%; animation: spin 0.7s linear infinite; }
+
+    #btn-change-key {
+      margin-left: auto; background: transparent; border: 1px solid #2d4a6a;
+      color: #6b8299; padding: 4px 10px; border-radius: 5px; font-size: 0.75rem;
+      cursor: pointer; transition: border-color 0.15s, color 0.15s; white-space: nowrap;
+    }
+    #btn-change-key:hover { border-color: #3b82f6; color: #93c5fd; }
+
+    /* ── Map container ───────────────────────────────────────────────── */
+    #map-container { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+    svg#map { width: 100%; height: 100%; display: block; cursor: grab; }
+    svg#map.dragging { cursor: grabbing; }
+
+    .county { stroke: #1a2535; stroke-width: 0.25px; }
+    .county:hover { stroke: #ffffff; stroke-width: 1px; }
+    .state-mesh { fill: none; stroke: #4a5e78; stroke-width: 0.7px; pointer-events: none; }
+
+    /* Heatmap canvas — sits above SVG, mouse events pass through */
+    #heatmap-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      display: none;
+    }
+
+    /* ── Zoom controls ───────────────────────────────────────────────── */
+    #zoom-controls {
+      position: absolute; top: 12px; right: 12px;
+      display: flex; flex-direction: column; gap: 4px; z-index: 20;
+    }
+    .zoom-btn {
+      width: 30px; height: 30px;
+      background: rgba(11,21,40,0.92); border: 1px solid #1e4a7a;
+      color: #94a3b8; border-radius: 6px; font-size: 1.1rem; line-height: 1;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.15s, color 0.15s;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .zoom-btn:hover { border-color: #3b82f6; color: #93c5fd; }
+    #btn-zoom-reset { font-size: 0.75rem; }
+
+    /* ── Tooltip ─────────────────────────────────────────────────────── */
+    #tooltip {
+      position: fixed; background: rgba(11,21,40,0.97); border: 1px solid #1e4a7a;
+      border-radius: 8px; padding: 11px 15px; font-size: 0.79rem; line-height: 1.55;
+      pointer-events: none; opacity: 0; transition: opacity 0.12s;
+      max-width: 250px; z-index: 1000; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    }
+    #tooltip.visible { opacity: 1; }
+    #tooltip h3 { font-size: 0.875rem; color: #60a5fa; margin-bottom: 7px; padding-bottom: 6px; border-bottom: 1px solid #1e3a5a; }
+    .tip-row { display: flex; justify-content: space-between; gap: 14px; margin: 1.5px 0; }
+    .tip-label { color: #7a95b0; }
+    .tip-val { font-weight: 600; color: #cbd5e1; font-variant-numeric: tabular-nums; }
+    .tip-highlight { color: #fbbf24 !important; }
+
+    /* ── Legend ──────────────────────────────────────────────────────── */
+    #legend {
+      position: absolute; bottom: 16px; left: 20px;
+      background: rgba(11,21,40,0.92); border: 1px solid #1e4a7a;
+      border-radius: 8px; padding: 11px 15px; display: none;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    }
+    #legend h4 { font-size: 0.7rem; color: #6b8299; text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px; }
+    #legend-canvas { width: 190px; height: 10px; border-radius: 3px; display: block; }
+    .legend-labels { display: flex; justify-content: space-between; font-size: 0.68rem; color: #6b8299; margin-top: 4px; }
+
+    /* ── Key gate ────────────────────────────────────────────────────── */
+    #key-gate {
+      position: absolute; inset: 0; background: #111827;
+      display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .key-card {
+      background: #1e2a3a; border: 1px solid #2d3f55; border-radius: 12px;
+      padding: 32px 36px; max-width: 440px; width: 90%;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+    .key-card h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 10px; }
+    .key-card p  { font-size: 0.82rem; color: #7a95b0; line-height: 1.6; margin-bottom: 18px; }
+    .key-card p a { color: #60a5fa; text-decoration: none; }
+    .key-card p a:hover { text-decoration: underline; }
+    .key-steps { background: #0f1d2e; border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; font-size: 0.79rem; color: #94a3b8; line-height: 1.9; }
+    .key-steps ol { padding-left: 18px; }
+    .key-steps a { color: #60a5fa; text-decoration: none; }
+    #key-input-row { display: flex; gap: 8px; }
+    #api-key-input {
+      flex: 1; background: #0f1d2e; border: 1px solid #2d4a6a; color: #d0e4f0;
+      padding: 8px 12px; border-radius: 6px; font-size: 0.82rem;
+      font-family: 'Courier New', monospace; outline: none;
+    }
+    #api-key-input:focus { border-color: #3b82f6; }
+    #api-key-input::placeholder { color: #3d5168; }
+    #btn-save-key {
+      background: #1d4ed8; color: #e2e8f0; border: none; padding: 8px 16px;
+      border-radius: 6px; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+      white-space: nowrap;
+    }
+    #btn-save-key:hover { background: #2563eb; }
+    #btn-save-key:disabled { background: #1e3a6a; color: #4a6a8a; cursor: default; }
+    #key-error { font-size: 0.75rem; color: #f87171; margin-top: 8px; min-height: 1.1em; }
+
+    /* ── Loading / error ─────────────────────────────────────────────── */
+    #loading {
+      position: absolute; inset: 0; display: none; flex-direction: column;
+      align-items: center; justify-content: center; background: #111827;
+      gap: 14px; font-size: 0.875rem; color: #6b8299; z-index: 10;
+    }
+    .spinner { width: 34px; height: 34px; border: 3px solid #1e3a5a; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #fetch-error {
+      position: absolute; inset: 0; display: none; flex-direction: column;
+      align-items: center; justify-content: center; background: #111827;
+      gap: 10px; z-index: 10; text-align: center; padding: 24px;
+    }
+    .err-title { color: #f87171; font-size: 0.95rem; font-weight: 600; }
+    .err-body  { color: #6b8299; font-size: 0.8rem; max-width: 380px; line-height: 1.6; }
+    #btn-retry { background: transparent; border: 1px solid #2d4a6a; color: #94a3b8; padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
+    #btn-retry:hover { border-color: #3b82f6; color: #93c5fd; }
+
+    .popeyes-dot { fill: #f97316; stroke: #7c2d12; stroke-width: 0.5px; opacity: 0.8; pointer-events: none; }
+
+    footer {
+      padding: 6px 24px; font-size: 0.68rem; color: #3d5168;
+      background: #1e2a3a; border-top: 1px solid #2d3f55; flex-shrink: 0;
+    }
+    footer a { color: #3b82f6; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>US Racial Minority Concentration by County</h1>
+  <p>American Community Survey 2022 5-Year Estimates &bull; US Census Bureau</p>
+</header>
+
+<div id="controls">
+  <label for="metric">Population group:</label>
+  <select id="metric">
+    <option value="minority_pct">All minorities (non-white)</option>
+    <option value="hispanic_pct">Hispanic or Latino (any race)</option>
+    <option value="black_pct">Black or African American</option>
+    <option value="asian_pct">Asian</option>
+    <option value="aian_pct">American Indian &amp; Alaska Native</option>
+    <option value="nhpi_pct">Native Hawaiian &amp; Pacific Islander</option>
+    <option value="multi_pct">Two or more races</option>
+  </select>
+
+  <div class="ctrl-divider"></div>
+
+  <!-- Popeyes dot toggle -->
+  <label class="overlay-toggle active-popeyes" id="popeyes-label" title="Show Popeyes restaurant locations">
+    <input type="checkbox" id="toggle-popeyes" checked>
+    <span class="swatch swatch-popeyes"></span>
+    Popeyes
+    <span id="popeyes-count"></span>
+    <span id="popeyes-spinner"></span>
+  </label>
+
+  <!-- Heatmap toggle -->
+  <label class="overlay-toggle" id="heat-label" title="Show Popeyes density heatmap">
+    <input type="checkbox" id="toggle-heat">
+    <span class="swatch swatch-heat" style="border-radius:2px;width:20px;"></span>
+    Heatmap
+  </label>
+
+  <button id="btn-change-key">Change API key&hellip;</button>
+</div>
+
+<div id="map-container">
+
+  <!-- Key gate -->
+  <div id="key-gate">
+    <div class="key-card">
+      <h2>Census API Key Required</h2>
+      <p>
+        This map pulls live data from the
+        <a href="https://www.census.gov/data/developers/data-sets/acs-5year.html" target="_blank" rel="noopener">US Census Bureau API</a>.
+        A free key is required &mdash; takes about one minute to get.
+        Stored locally on this machine only.
+      </p>
+      <div class="key-steps">
+        <ol>
+          <li>Go to <a href="https://api.census.gov/data/key_signup.html" target="_blank" rel="noopener">api.census.gov/data/key_signup.html</a></li>
+          <li>Enter your name and email, then submit</li>
+          <li>Check your inbox &mdash; key arrives in &lt;1 min</li>
+          <li>Paste it below and click Save</li>
+        </ol>
+      </div>
+      <div id="key-input-row">
+        <input id="api-key-input" type="text" placeholder="Paste your Census API key&hellip;" autocomplete="off" spellcheck="false">
+        <button id="btn-save-key">Save key</button>
+      </div>
+      <div id="key-error"></div>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <span id="loading-msg">Fetching Census data for all 3,100+ counties&hellip;</span>
+  </div>
+
+  <!-- Fetch error -->
+  <div id="fetch-error">
+    <div class="err-title">&#9888; Failed to load data</div>
+    <div class="err-body" id="fetch-error-body"></div>
+    <button id="btn-retry">Try again</button>
+  </div>
+
+  <svg id="map"></svg>
+  <canvas id="heatmap-canvas"></canvas>
+
+  <!-- Zoom controls -->
+  <div id="zoom-controls">
+    <button class="zoom-btn" id="btn-zoom-in"  title="Zoom in">+</button>
+    <button class="zoom-btn" id="btn-zoom-out" title="Zoom out">&minus;</button>
+    <button class="zoom-btn" id="btn-zoom-reset" title="Reset view">Reset</button>
+  </div>
+
+  <!-- Choropleth legend -->
+  <div id="legend">
+    <h4 id="legend-title">% of population</h4>
+    <canvas id="legend-canvas" width="190" height="10"></canvas>
+    <div class="legend-labels">
+      <span>0%</span><span id="legend-mid"></span><span id="legend-max"></span>
+    </div>
+  </div>
+
+</div>
+
+<div id="tooltip"></div>
+
+<footer>
+  Source: <a href="https://www.census.gov/programs-surveys/acs" target="_blank" rel="noopener">US Census Bureau &mdash; ACS 2022 5-Year Estimates</a>
+  (Tables B02001, B03003) &bull;
+  Popeyes locations: <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a> via Overpass API &bull;
+  Boundaries: <a href="https://github.com/topojson/us-atlas" target="_blank" rel="noopener">us-atlas</a> / TIGER/Line
+</footer>
+
+<script>
+(async function () {
+
+  const TOPO_URL = 'https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json';
+
+  const METRICS = {
+    minority_pct: { label: 'All minorities (non-white)',         interp: d3.interpolateOrRd    },
+    hispanic_pct: { label: 'Hispanic or Latino',                 interp: d3.interpolateGreens  },
+    black_pct:    { label: 'Black or African American',          interp: d3.interpolatePurples },
+    asian_pct:    { label: 'Asian',                              interp: d3.interpolateBlues   },
+    aian_pct:     { label: 'American Indian & Alaska Native',    interp: d3.interpolateOranges },
+    nhpi_pct:     { label: 'Native Hawaiian & Pacific Islander', interp: d3.interpolateReds    },
+    multi_pct:    { label: 'Two or more races',                  interp: d3.interpolateViridis },
+  };
+
+  // ── State ──────────────────────────────────────────────────────────────
+  let countyData    = {};
+  let activeMetric  = 'minority_pct';
+  let topoCache     = null;
+  let proj          = null;
+  let currentZoom   = d3.zoomIdentity;
+  let popeyesData   = null;
+  let popeyesVisible = true;
+  let heatmapVisible = false;
+  let heatInstance  = null;
+  let isDragging    = false;
+
+  // ── Elements ───────────────────────────────────────────────────────────
+  const $gate         = document.getElementById('key-gate');
+  const $loading      = document.getElementById('loading');
+  const $loadingMsg   = document.getElementById('loading-msg');
+  const $fetchError   = document.getElementById('fetch-error');
+  const $keyInput     = document.getElementById('api-key-input');
+  const $keyError     = document.getElementById('key-error');
+  const $btnSave      = document.getElementById('btn-save-key');
+  const $popeyesLabel = document.getElementById('popeyes-label');
+  const $popeyesCount = document.getElementById('popeyes-count');
+  const $popeyesSpin  = document.getElementById('popeyes-spinner');
+  const $heatLabel    = document.getElementById('heat-label');
+
+  const show = el => el.style.display = 'flex';
+  const hide = el => el.style.display = 'none';
+
+  function showGate()    { show($gate); hide($loading); hide($fetchError); }
+  function showLoading() { hide($gate); show($loading); hide($fetchError); }
+  function showError(m)  { hide($gate); hide($loading); show($fetchError); document.getElementById('fetch-error-body').textContent = m; }
+  function showMap()     { hide($gate); hide($loading); hide($fetchError); }
+
+  // ── Boot ───────────────────────────────────────────────────────────────
+  try {
+    const { has_key } = await fetch('/api/status').then(r => r.json());
+    has_key ? loadMapData() : showGate();
+  } catch { showGate(); }
+
+  // ── Key management ─────────────────────────────────────────────────────
+  $btnSave.addEventListener('click', async () => {
+    const key = $keyInput.value.trim();
+    if (!key) { $keyError.textContent = 'Please paste your Census API key.'; return; }
+    $keyError.textContent = '';
+    $btnSave.disabled = true;
+    $loadingMsg.textContent = 'Validating key…';
+    showLoading();
+    const res  = await fetch('/api/save-key', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ key }) });
+    const data = await res.json();
+    if (!res.ok) { $btnSave.disabled = false; showGate(); $keyError.textContent = data.error || 'Something went wrong.'; return; }
+    loadMapData();
+  });
+
+  $keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') $btnSave.click(); });
+
+  document.getElementById('btn-change-key').addEventListener('click', async () => {
+    await fetch('/api/clear-key', { method: 'POST' });
+    resetState();
+    showGate();
+  });
+
+  function resetState() {
+    countyData = {}; popeyesData = null;
+    d3.select('#map').selectAll('*').remove();
+    clearHeatmap();
+    document.getElementById('legend').style.display = 'none';
+    $keyInput.value = ''; $keyError.textContent = ''; $btnSave.disabled = false;
+    document.getElementById('toggle-popeyes').checked = true;
+    $popeyesLabel.classList.add('active-popeyes');
+    popeyesVisible = true; heatmapVisible = false;
+    document.getElementById('toggle-heat').checked = false;
+    $heatLabel.classList.remove('active-heat');
+    document.getElementById('heatmap-canvas').style.display = 'none';
+  }
+
+  document.getElementById('btn-retry').addEventListener('click', () => loadMapData());
+
+  // ── Census data load ───────────────────────────────────────────────────
+  async function loadMapData() {
+    $loadingMsg.textContent = 'Fetching Census data for all 3,100+ counties…';
+    showLoading();
+    try {
+      const [censusRaw, topo] = await Promise.all([
+        fetch('/api/census-data').then(async r => { const b = await r.json(); if (!r.ok) throw new Error(b.error || `HTTP ${r.status}`); return b; }),
+        topoCache ? Promise.resolve(topoCache) : fetch(TOPO_URL).then(r => { if (!r.ok) throw new Error(`TopoJSON: HTTP ${r.status}`); return r.json(); }),
+      ]);
+
+      if (censusRaw.error === 'no_key' || censusRaw.error === 'invalid_key') {
+        await fetch('/api/clear-key', { method: 'POST' });
+        showGate(); $keyError.textContent = 'Key was rejected — please re-enter it.'; return;
+      }
+
+      topoCache = topo;
+      const [headers, ...rows] = censusRaw;
+      countyData = {};
+      for (const row of rows) {
+        const o = Object.fromEntries(headers.map((h, i) => [h, row[i]]));
+        const fips = o.state.padStart(2,'0') + o.county.padStart(3,'0');
+        const n = k => Math.max(0, parseInt(o[k]) || 0);
+        const total = n('B02001_001E'), white = n('B02001_002E'), black = n('B02001_003E'),
+              aian = n('B02001_004E'), asian = n('B02001_005E'), nhpi = n('B02001_006E'),
+              multi = n('B02001_008E'), hispanic = n('B03003_003E');
+        const pct = (num, den) => den > 0 ? (num / den) * 100 : null;
+        countyData[fips] = {
+          name: o.NAME, total,
+          minority_pct: pct(total - white, total), black_pct: pct(black, total),
+          asian_pct: pct(asian, total), hispanic_pct: pct(hispanic, total),
+          aian_pct: pct(aian, total), nhpi_pct: pct(nhpi, total), multi_pct: pct(multi, total),
+        };
+      }
+
+      showMap();
+      if (d3.select('#map g').empty()) renderMap(topo); else { applyColors(); renderLegend(); }
+      document.getElementById('legend').style.display = 'block';
+
+      // Auto-load Popeyes in background
+      loadPopeyes();
+
+    } catch (err) {
+      console.error(err);
+      showError(err.message || 'An unexpected error occurred.');
+    }
+  }
+
+  // ── Map rendering ──────────────────────────────────────────────────────
+  function renderMap(topo) {
+    const container = document.getElementById('map-container');
+    const svg       = d3.select('#map');
+    const dims      = () => ({ w: container.clientWidth, h: container.clientHeight });
+    const mkProj    = (w, h) => d3.geoAlbersUsa().scale(w * 1.25).translate([w / 2, h / 2]);
+
+    let { w, h } = dims();
+    proj = mkProj(w, h);
+    let path = d3.geoPath().projection(proj);
+    svg.attr('viewBox', `0 0 ${w} ${h}`);
+
+    const counties  = topojson.feature(topo, topo.objects.counties);
+    const stateMesh = topojson.mesh(topo, topo.objects.states, (a, b) => a !== b);
+    const g         = svg.append('g');
+
+    g.selectAll('.county').data(counties.features).join('path')
+      .attr('class', 'county').attr('d', path)
+      .on('mousemove', onMouseMove).on('mouseleave', onMouseLeave);
+
+    g.append('path').datum(stateMesh).attr('class', 'state-mesh').attr('d', path);
+
+    applyColors();
+    renderLegend();
+
+    // ── D3 Zoom ────────────────────────────────────────────────────────
+    const zoomBehavior = d3.zoom()
+      .scaleExtent([1, 16])
+      .on('start', () => { isDragging = true; svg.classed('dragging', true); })
+      .on('zoom', event => {
+        currentZoom = event.transform;
+        g.attr('transform', currentZoom);
+        // Thin strokes as you zoom in
+        const s = currentZoom.k;
+        g.selectAll('.county').style('stroke-width', (0.25 / s) + 'px');
+        g.select('.state-mesh').style('stroke-width', (0.7 / s) + 'px');
+        g.selectAll('.popeyes-dot').attr('r', 3 / Math.sqrt(s));
+        if (heatmapVisible) drawHeatmap();
+      })
+      .on('end', () => { isDragging = false; svg.classed('dragging', false); });
+
+    svg.call(zoomBehavior);
+
+    document.getElementById('btn-zoom-in').addEventListener('click',
+      () => svg.transition().duration(300).call(zoomBehavior.scaleBy, 2));
+    document.getElementById('btn-zoom-out').addEventListener('click',
+      () => svg.transition().duration(300).call(zoomBehavior.scaleBy, 0.5));
+    document.getElementById('btn-zoom-reset').addEventListener('click',
+      () => svg.transition().duration(400).call(zoomBehavior.transform, d3.zoomIdentity));
+
+    // Resize
+    new ResizeObserver(() => {
+      ({ w, h } = dims());
+      if (w < 1 || h < 1) return;
+      svg.attr('viewBox', `0 0 ${w} ${h}`);
+      proj = mkProj(w, h);
+      path = d3.geoPath().projection(proj);
+      g.selectAll('.county').attr('d', path);
+      g.select('.state-mesh').attr('d', path);
+      resizeHeatmapCanvas();
+      if (heatmapVisible) drawHeatmap();
+    }).observe(container);
+  }
+
+  // ── Popeyes auto-load ──────────────────────────────────────────────────
+  async function loadPopeyes() {
+    $popeyesSpin.style.display = 'inline-block';
+    $popeyesCount.textContent = '';
+    try {
+      const res = await fetch('/api/popeyes');
+      const body = await res.json();
+      if (body.error) throw new Error(body.error);
+      popeyesData = body.locations;
+      if (popeyesVisible) renderPopeyesDots();
+      if (heatmapVisible) drawHeatmap();
+      $popeyesCount.textContent = `(${popeyesData.length.toLocaleString()})`;
+    } catch (err) {
+      console.error('Popeyes load failed:', err);
+      $popeyesCount.textContent = '(unavailable)';
+    } finally {
+      $popeyesSpin.style.display = 'none';
+    }
+  }
+
+  // ── Popeyes dot layer ──────────────────────────────────────────────────
+  document.getElementById('toggle-popeyes').addEventListener('change', e => {
+    popeyesVisible = e.target.checked;
+    $popeyesLabel.classList.toggle('active-popeyes', popeyesVisible);
+    if (popeyesVisible) { if (popeyesData) renderPopeyesDots(); }
+    else d3.select('#map g').select('.popeyes-layer').remove();
+  });
+
+  function renderPopeyesDots() {
+    if (!proj || !popeyesData) return;
+    const g = d3.select('#map g');
+    g.select('.popeyes-layer').remove();
+    const layer = g.append('g').attr('class', 'popeyes-layer');
+    const k = currentZoom.k;
+    layer.selectAll('circle')
+      .data(popeyesData.filter(d => proj([d.lon, d.lat])))
+      .join('circle')
+        .attr('class', 'popeyes-dot')
+        .attr('r', 3 / Math.sqrt(k))
+        .attr('cx', d => proj([d.lon, d.lat])[0])
+        .attr('cy', d => proj([d.lon, d.lat])[1]);
+  }
+
+  // ── Heatmap ────────────────────────────────────────────────────────────
+  document.getElementById('toggle-heat').addEventListener('change', e => {
+    heatmapVisible = e.target.checked;
+    $heatLabel.classList.toggle('active-heat', heatmapVisible);
+    const canvas = document.getElementById('heatmap-canvas');
+    if (heatmapVisible) {
+      canvas.style.display = 'block';
+      resizeHeatmapCanvas();
+      if (popeyesData) drawHeatmap();
+    } else {
+      canvas.style.display = 'none';
+      clearHeatmap();
+    }
+  });
+
+  function resizeHeatmapCanvas() {
+    const container = document.getElementById('map-container');
+    const canvas = document.getElementById('heatmap-canvas');
+    canvas.width  = container.clientWidth;
+    canvas.height = container.clientHeight;
+    heatInstance = null; // reset simpleheat instance on resize
+  }
+
+  function getHeatInstance() {
+    if (!heatInstance) {
+      const canvas = document.getElementById('heatmap-canvas');
+      if (canvas.width < 1) resizeHeatmapCanvas();
+      heatInstance = simpleheat('heatmap-canvas');
+      heatInstance.gradient({ 0.15: '#3b82f6', 0.4: '#22c55e', 0.65: '#f59e0b', 0.85: '#ef4444', 1.0: '#7f1d1d' });
+      heatInstance.max(6);
+    }
+    return heatInstance;
+  }
+
+  function drawHeatmap() {
+    if (!popeyesData || !proj) return;
+    const k  = currentZoom.k;
+    const tx = currentZoom.x;
+    const ty = currentZoom.y;
+    const r  = Math.max(10, Math.min(60, 22 * Math.sqrt(k)));
+
+    const points = [];
+    for (const loc of popeyesData) {
+      const p = proj([loc.lon, loc.lat]);
+      if (!p) continue;
+      points.push([p[0] * k + tx, p[1] * k + ty, 1]);
+    }
+
+    const heat = getHeatInstance();
+    heat.data(points);
+    heat.radius(r, r * 1.4);
+    heat.draw(0.03);
+  }
+
+  function clearHeatmap() {
+    const canvas = document.getElementById('heatmap-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    heatInstance = null;
+  }
+
+  // ── Color scale ────────────────────────────────────────────────────────
+  function makeScale(key) {
+    const vals = Object.values(countyData).map(d => d[key]).filter(v => v != null && v >= 0).sort(d3.ascending);
+    const maxVal = key === 'minority_pct' ? 100 : Math.ceil(d3.quantile(vals, 0.98) ?? 50);
+    return { scale: d3.scaleSequential([0, maxVal], t => METRICS[key].interp(0.12 + t * 0.88)), max: maxVal };
+  }
+
+  function applyColors() {
+    const { scale } = makeScale(activeMetric);
+    d3.selectAll('.county').attr('fill', d => {
+      const fips = String(d.id).padStart(5, '0');
+      const val  = countyData[fips]?.[activeMetric];
+      return (val != null && val >= 0) ? scale(val) : '#1e2d3d';
+    });
+  }
+
+  document.getElementById('metric').addEventListener('change', e => {
+    activeMetric = e.target.value;
+    if (Object.keys(countyData).length) { applyColors(); renderLegend(); }
+  });
+
+  // ── Legend ─────────────────────────────────────────────────────────────
+  function renderLegend() {
+    const { scale, max } = makeScale(activeMetric);
+    document.getElementById('legend-title').textContent = METRICS[activeMetric].label;
+    document.getElementById('legend-mid').textContent   = `${(max / 2).toFixed(0)}%`;
+    document.getElementById('legend-max').textContent   = max === 100 ? '100%' : `≥${max.toFixed(0)}%`;
+    const canvas = document.getElementById('legend-canvas');
+    const ctx    = canvas.getContext('2d');
+    for (let x = 0; x < canvas.width; x++) {
+      ctx.fillStyle = scale((x / canvas.width) * max);
+      ctx.fillRect(x, 0, 1, canvas.height);
+    }
+  }
+
+  // ── Tooltip ────────────────────────────────────────────────────────────
+  const tooltip = document.getElementById('tooltip');
+
+  function onMouseMove(event, d) {
+    if (isDragging) return;
+    const fips = String(d.id).padStart(5, '0');
+    const info = countyData[fips];
+    if (!info) return;
+    const fmt = v => (v != null && v >= 0) ? v.toFixed(1) + '%' : 'N/A';
+    const hl  = activeMetric;
+
+    tooltip.innerHTML = `
+      <h3>${info.name}</h3>
+      <div class="tip-row"><span class="tip-label">Population</span><span class="tip-val">${info.total.toLocaleString()}</span></div>
+      <div class="tip-row"><span class="tip-label">All minorities</span><span class="tip-val ${hl==='minority_pct'?'tip-highlight':''}">${fmt(info.minority_pct)}</span></div>
+      <div class="tip-row"><span class="tip-label">Hispanic / Latino</span><span class="tip-val ${hl==='hispanic_pct'?'tip-highlight':''}">${fmt(info.hispanic_pct)}</span></div>
+      <div class="tip-row"><span class="tip-label">Black / African Am.</span><span class="tip-val ${hl==='black_pct'?'tip-highlight':''}">${fmt(info.black_pct)}</span></div>
+      <div class="tip-row"><span class="tip-label">Asian</span><span class="tip-val ${hl==='asian_pct'?'tip-highlight':''}">${fmt(info.asian_pct)}</span></div>
+      <div class="tip-row"><span class="tip-label">Am. Indian / AK Native</span><span class="tip-val ${hl==='aian_pct'?'tip-highlight':''}">${fmt(info.aian_pct)}</span></div>
+      <div class="tip-row"><span class="tip-label">NH / Pacific Islander</span><span class="tip-val ${hl==='nhpi_pct'?'tip-highlight':''}">${fmt(info.nhpi_pct)}</span></div>
+      <div class="tip-row"><span class="tip-label">Two or more races</span><span class="tip-val ${hl==='multi_pct'?'tip-highlight':''}">${fmt(info.multi_pct)}</span></div>`;
+
+    const pad = 14;
+    let x = event.clientX + pad, y = event.clientY - pad;
+    const r = tooltip.getBoundingClientRect();
+    if (x + r.width  + 4 > window.innerWidth)  x = event.clientX - r.width  - pad;
+    if (y + r.height + 4 > window.innerHeight) y = event.clientY - r.height - pad;
+    tooltip.style.left = `${x}px`; tooltip.style.top = `${y}px`;
+    tooltip.classList.add('visible');
+  }
+
+  function onMouseLeave() { tooltip.classList.remove('visible'); }
+
+})();
+</script>
+</body>
+</html>
