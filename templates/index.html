@@ -450,15 +450,18 @@
     const container = document.getElementById('map-container');
     const svg       = d3.select('#map');
     const dims      = () => ({ w: container.clientWidth, h: container.clientHeight });
-    const mkProj    = (w, h) => d3.geoAlbersUsa().scale(w * 1.25).translate([w / 2, h / 2]);
 
     let { w, h } = dims();
-    proj = mkProj(w, h);
-    let path = d3.geoPath().projection(proj);
     svg.attr('viewBox', `0 0 ${w} ${h}`);
 
     const counties  = topojson.feature(topo, topo.objects.counties);
     const stateMesh = topojson.mesh(topo, topo.objects.states, (a, b) => a !== b);
+
+    // fitExtent auto-calculates scale+translate to fill the container at any size
+    const mkProj = (w, h) => d3.geoAlbersUsa().fitExtent([[20, 20], [w - 20, h - 20]], counties);
+
+    proj = mkProj(w, h);
+    let path = d3.geoPath().projection(proj);
     const g         = svg.append('g');
 
     g.selectAll('.county').data(counties.features).join('path')
