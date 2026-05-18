@@ -96,7 +96,7 @@ def census_data():
 # ── Chain locations — shared helpers ───────────────────────────────────────
 
 CACHE_MAX_AGE_DAYS = 7
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_URL = "https://overpass.kumi.systems/api/interpreter"
 
 
 def _fetch_chain(name, cache_file, query, cache_var, lock, ready):
@@ -150,7 +150,7 @@ def _fetch_chain(name, cache_file, query, cache_var, lock, ready):
 
 POPEYES_CACHE_FILE = os.path.join(os.path.dirname(__file__), "popeyes_cache.json")
 POPEYES_QUERY = """
-[out:json][timeout:90];
+[out:json][timeout:120];
 area["ISO3166-1"="US"][admin_level=2]->.usa;
 (
   node["amenity"="fast_food"]["name"~"^Popeyes",i](area.usa);
@@ -183,13 +183,11 @@ def popeyes():
 
 KFC_CACHE_FILE = os.path.join(os.path.dirname(__file__), "kfc_cache.json")
 KFC_QUERY = """
-[out:json][timeout:90];
+[out:json][timeout:120];
 area["ISO3166-1"="US"][admin_level=2]->.usa;
 (
   node["amenity"="fast_food"]["name"~"^KFC",i](area.usa);
   way["amenity"="fast_food"]["name"~"^KFC",i](area.usa);
-  node["amenity"="fast_food"]["name"~"Kentucky Fried Chicken",i](area.usa);
-  way["amenity"="fast_food"]["name"~"Kentucky Fried Chicken",i](area.usa);
 );
 out center;
 """
