@@ -54,6 +54,7 @@
     .overlay-toggle input { display: none; }
     .overlay-toggle:hover { border-color: #64748b; color: #cbd5e1; }
     .overlay-toggle.active-popeyes { border-color: #f97316 !important; color: #fed7aa !important; }
+    .overlay-toggle.active-kfc     { border-color: #e4002b !important; color: #fca5a5 !important; }
     .overlay-toggle.active-heat    { border-color: #ef4444 !important; color: #fca5a5 !important; }
 
     .swatch {
@@ -61,12 +62,16 @@
       opacity: 0.5; transition: opacity 0.2s;
     }
     .active-popeyes .swatch-popeyes,
+    .active-kfc     .swatch-kfc,
     .active-heat    .swatch-heat { opacity: 1; }
     .swatch-popeyes { background: #f97316; }
+    .swatch-kfc     { background: #e4002b; }
     .swatch-heat    { background: linear-gradient(90deg,#3b82f6,#22c55e,#f59e0b,#ef4444); }
 
     #popeyes-count  { font-size: 0.7rem; color: #f97316; }
     #popeyes-spinner { display: none; width: 10px; height: 10px; border: 2px solid #2d3f55; border-top-color: #f97316; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    #kfc-count  { font-size: 0.7rem; color: #e4002b; }
+    #kfc-spinner { display: none; width: 10px; height: 10px; border: 2px solid #2d3f55; border-top-color: #e4002b; border-radius: 50%; animation: spin 0.7s linear infinite; }
 
     #btn-change-key {
       margin-left: auto; background: transparent; border: 1px solid #2d4a6a;
@@ -187,6 +192,7 @@
     #btn-retry:hover { border-color: #3b82f6; color: #93c5fd; }
 
     .popeyes-dot { fill: #f97316; stroke: #7c2d12; stroke-width: 0.5px; opacity: 0.8; pointer-events: none; }
+    .kfc-dot     { fill: #e4002b; stroke: #7f0012; stroke-width: 0.5px; opacity: 0.8; pointer-events: none; }
 
     footer {
       padding: 6px 24px; font-size: 0.68rem; color: #3d5168;
@@ -224,6 +230,15 @@
     Popeyes
     <span id="popeyes-count"></span>
     <span id="popeyes-spinner"></span>
+  </label>
+
+  <!-- KFC dot toggle -->
+  <label class="overlay-toggle active-kfc" id="kfc-label" title="Show KFC restaurant locations">
+    <input type="checkbox" id="toggle-kfc" checked>
+    <span class="swatch swatch-kfc"></span>
+    KFC
+    <span id="kfc-count"></span>
+    <span id="kfc-spinner"></span>
   </label>
 
   <!-- Heatmap toggle -->
@@ -303,7 +318,7 @@
 <footer>
   Source: <a href="https://www.census.gov/programs-surveys/acs" target="_blank" rel="noopener">US Census Bureau &mdash; ACS 2022 5-Year Estimates</a>
   (Tables B02001, B03003) &bull;
-  Popeyes locations: <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a> via Overpass API &bull;
+  Popeyes &amp; KFC locations: <a href="https://www.openstreetmap.org" target="_blank" rel="noopener">OpenStreetMap</a> via Overpass API &bull;
   Boundaries: <a href="https://github.com/topojson/us-atlas" target="_blank" rel="noopener">us-atlas</a> / TIGER/Line
 </footer>
 
@@ -330,6 +345,8 @@
   let currentZoom   = d3.zoomIdentity;
   let popeyesData   = null;
   let popeyesVisible = true;
+  let kfcData       = null;
+  let kfcVisible    = true;
   let heatmapVisible = false;
   let heatInstance  = null;
   let isDragging    = false;
@@ -345,6 +362,9 @@
   const $popeyesLabel = document.getElementById('popeyes-label');
   const $popeyesCount = document.getElementById('popeyes-count');
   const $popeyesSpin  = document.getElementById('popeyes-spinner');
+  const $kfcLabel     = document.getElementById('kfc-label');
+  const $kfcCount     = document.getElementById('kfc-count');
+  const $kfcSpin      = document.getElementById('kfc-spinner');
   const $heatLabel    = document.getElementById('heat-label');
 
   const show = el => el.style.display = 'flex';
@@ -384,14 +404,18 @@
   });
 
   function resetState() {
-    countyData = {}; popeyesData = null;
+    countyData = {}; popeyesData = null; kfcData = null;
     d3.select('#map').selectAll('*').remove();
     clearHeatmap();
     document.getElementById('legend').style.display = 'none';
     $keyInput.value = ''; $keyError.textContent = ''; $btnSave.disabled = false;
     document.getElementById('toggle-popeyes').checked = true;
     $popeyesLabel.classList.add('active-popeyes');
-    popeyesVisible = true; heatmapVisible = false;
+    popeyesVisible = true;
+    document.getElementById('toggle-kfc').checked = true;
+    $kfcLabel.classList.add('active-kfc');
+    kfcVisible = true;
+    heatmapVisible = false;
     document.getElementById('toggle-heat').checked = false;
     $heatLabel.classList.remove('active-heat');
     document.getElementById('heatmap-canvas').style.display = 'none';
@@ -437,8 +461,9 @@
       if (d3.select('#map g').empty()) renderMap(topo); else { applyColors(); renderLegend(); }
       document.getElementById('legend').style.display = 'block';
 
-      // Auto-load Popeyes in background
+      // Auto-load restaurant overlays in background
       loadPopeyes();
+      loadKfc();
 
     } catch (err) {
       console.error(err);
@@ -486,6 +511,7 @@
         g.selectAll('.county').style('stroke-width', (0.25 / s) + 'px');
         g.select('.state-mesh').style('stroke-width', (0.7 / s) + 'px');
         g.selectAll('.popeyes-dot').attr('r', 3 / Math.sqrt(s));
+        g.selectAll('.kfc-dot').attr('r', 3 / Math.sqrt(s));
         if (heatmapVisible) drawHeatmap();
       })
       .on('end', () => { isDragging = false; svg.classed('dragging', false); });
@@ -551,6 +577,48 @@
       .data(popeyesData.filter(d => proj([d.lon, d.lat])))
       .join('circle')
         .attr('class', 'popeyes-dot')
+        .attr('r', 3 / Math.sqrt(k))
+        .attr('cx', d => proj([d.lon, d.lat])[0])
+        .attr('cy', d => proj([d.lon, d.lat])[1]);
+  }
+
+  // ── KFC load ───────────────────────────────────────────────────────────
+  async function loadKfc() {
+    $kfcSpin.style.display = 'inline-block';
+    $kfcCount.textContent = '';
+    try {
+      const res = await fetch('/api/kfc');
+      const body = await res.json();
+      if (body.error) throw new Error(body.error);
+      kfcData = body.locations;
+      if (kfcVisible) renderKfcDots();
+      $kfcCount.textContent = `(${kfcData.length.toLocaleString()})`;
+    } catch (err) {
+      console.error('KFC load failed:', err);
+      $kfcCount.textContent = '(unavailable)';
+    } finally {
+      $kfcSpin.style.display = 'none';
+    }
+  }
+
+  // ── KFC dot layer ──────────────────────────────────────────────────────
+  document.getElementById('toggle-kfc').addEventListener('change', e => {
+    kfcVisible = e.target.checked;
+    $kfcLabel.classList.toggle('active-kfc', kfcVisible);
+    if (kfcVisible) { if (kfcData) renderKfcDots(); }
+    else d3.select('#map g').select('.kfc-layer').remove();
+  });
+
+  function renderKfcDots() {
+    if (!proj || !kfcData) return;
+    const g = d3.select('#map g');
+    g.select('.kfc-layer').remove();
+    const layer = g.append('g').attr('class', 'kfc-layer');
+    const k = currentZoom.k;
+    layer.selectAll('circle')
+      .data(kfcData.filter(d => proj([d.lon, d.lat])))
+      .join('circle')
+        .attr('class', 'kfc-dot')
         .attr('r', 3 / Math.sqrt(k))
         .attr('cx', d => proj([d.lon, d.lat])[0])
         .attr('cy', d => proj([d.lon, d.lat])[1]);

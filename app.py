@@ -93,52 +93,33 @@ def census_data():
         return jsonify({"error": str(e)}), 502
 
 
-# ── Popeyes — background fetch + file cache ────────────────────────────────
+# ── Chain locations — shared helpers ───────────────────────────────────────
 
-POPEYES_CACHE_FILE = os.path.join(os.path.dirname(__file__), "popeyes_cache.json")
 CACHE_MAX_AGE_DAYS = 7
-
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-OVERPASS_QUERY = """
-[out:json][timeout:90];
-area["ISO3166-1"="US"][admin_level=2]->.usa;
-(
-  node["amenity"="fast_food"]["name"~"^Popeyes",i](area.usa);
-  way["amenity"="fast_food"]["name"~"^Popeyes",i](area.usa);
-);
-out center;
-"""
-
-_popeyes_cache = None
-_popeyes_lock  = threading.Lock()
-_popeyes_ready = threading.Event()
 
 
-def _fetch_popeyes():
-    """Load from file cache if fresh, otherwise fetch from Overpass. Runs in background thread."""
-    global _popeyes_cache
-
-    # Try the on-disk cache first
-    if os.path.exists(POPEYES_CACHE_FILE):
+def _fetch_chain(name, cache_file, query, cache_var, lock, ready):
+    """Generic: load from file cache if fresh, otherwise fetch from Overpass."""
+    if os.path.exists(cache_file):
         try:
-            age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(POPEYES_CACHE_FILE))
+            age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(cache_file))
             if age < timedelta(days=CACHE_MAX_AGE_DAYS):
-                with open(POPEYES_CACHE_FILE) as f:
+                with open(cache_file) as f:
                     data = json.load(f)
-                with _popeyes_lock:
-                    _popeyes_cache = data
-                _popeyes_ready.set()
-                print(f"  Popeyes: loaded {data['count']} locations from cache ({age.days}d old)")
+                with lock:
+                    cache_var[0] = data
+                ready.set()
+                print(f"  {name}: loaded {data['count']} locations from cache ({age.days}d old)")
                 return
         except Exception as e:
-            print(f"  Popeyes cache read error: {e}")
+            print(f"  {name} cache read error: {e}")
 
-    # Cache missing or stale — fetch live from Overpass
-    print("  Popeyes: fetching from OpenStreetMap (first run only)...")
+    print(f"  {name}: fetching from OpenStreetMap...")
     try:
         r = requests.post(
             OVERPASS_URL,
-            data={"data": OVERPASS_QUERY},
+            data={"data": query},
             headers={"User-Agent": "minority-map/1.0"},
             timeout=90,
         )
@@ -153,32 +134,84 @@ def _fetch_popeyes():
                 locations.append({"lat": el["center"]["lat"], "lon": el["center"]["lon"]})
 
         data = {"locations": locations, "count": len(locations)}
-
-        with open(POPEYES_CACHE_FILE, "w") as f:
+        with open(cache_file, "w") as f:
             json.dump(data, f)
-
-        with _popeyes_lock:
-            _popeyes_cache = data
-        print(f"  Popeyes: fetched and cached {len(locations)} locations")
+        with lock:
+            cache_var[0] = data
+        print(f"  {name}: fetched and cached {len(locations)} locations")
 
     except Exception as e:
-        print(f"  Popeyes fetch error: {e}")
+        print(f"  {name} fetch error: {e}")
     finally:
-        _popeyes_ready.set()  # Always unblock the API endpoint
+        ready.set()
 
 
-# Kick off the background fetch as soon as the app loads
-threading.Thread(target=_fetch_popeyes, daemon=True).start()
+# ── Popeyes ────────────────────────────────────────────────────────────────
+
+POPEYES_CACHE_FILE = os.path.join(os.path.dirname(__file__), "popeyes_cache.json")
+POPEYES_QUERY = """
+[out:json][timeout:90];
+area["ISO3166-1"="US"][admin_level=2]->.usa;
+(
+  node["amenity"="fast_food"]["name"~"^Popeyes",i](area.usa);
+  way["amenity"="fast_food"]["name"~"^Popeyes",i](area.usa);
+);
+out center;
+"""
+
+_popeyes_cache = [None]
+_popeyes_lock  = threading.Lock()
+_popeyes_ready = threading.Event()
+
+threading.Thread(
+    target=_fetch_chain,
+    args=("Popeyes", POPEYES_CACHE_FILE, POPEYES_QUERY, _popeyes_cache, _popeyes_lock, _popeyes_ready),
+    daemon=True,
+).start()
 
 
 @app.route("/api/popeyes")
 def popeyes():
-    # Wait for the background thread (instant if cache hit, ~15s on first ever run)
     _popeyes_ready.wait(timeout=100)
     with _popeyes_lock:
-        if _popeyes_cache is not None:
-            return jsonify(_popeyes_cache)
+        if _popeyes_cache[0] is not None:
+            return jsonify(_popeyes_cache[0])
     return jsonify({"error": "Popeyes data unavailable — try again shortly."}), 503
+
+
+# ── KFC ────────────────────────────────────────────────────────────────────
+
+KFC_CACHE_FILE = os.path.join(os.path.dirname(__file__), "kfc_cache.json")
+KFC_QUERY = """
+[out:json][timeout:90];
+area["ISO3166-1"="US"][admin_level=2]->.usa;
+(
+  node["amenity"="fast_food"]["name"~"^KFC",i](area.usa);
+  way["amenity"="fast_food"]["name"~"^KFC",i](area.usa);
+  node["amenity"="fast_food"]["name"~"Kentucky Fried Chicken",i](area.usa);
+  way["amenity"="fast_food"]["name"~"Kentucky Fried Chicken",i](area.usa);
+);
+out center;
+"""
+
+_kfc_cache = [None]
+_kfc_lock  = threading.Lock()
+_kfc_ready = threading.Event()
+
+threading.Thread(
+    target=_fetch_chain,
+    args=("KFC", KFC_CACHE_FILE, KFC_QUERY, _kfc_cache, _kfc_lock, _kfc_ready),
+    daemon=True,
+).start()
+
+
+@app.route("/api/kfc")
+def kfc():
+    _kfc_ready.wait(timeout=100)
+    with _kfc_lock:
+        if _kfc_cache[0] is not None:
+            return jsonify(_kfc_cache[0])
+    return jsonify({"error": "KFC data unavailable — try again shortly."}), 503
 
 
 if __name__ == "__main__":
