@@ -73,12 +73,6 @@
     #kfc-count  { font-size: 0.7rem; color: #e4002b; }
     #kfc-spinner { display: none; width: 10px; height: 10px; border: 2px solid #2d3f55; border-top-color: #e4002b; border-radius: 50%; animation: spin 0.7s linear infinite; }
 
-    #btn-change-key {
-      margin-left: auto; background: transparent; border: 1px solid #2d4a6a;
-      color: #6b8299; padding: 4px 10px; border-radius: 5px; font-size: 0.75rem;
-      cursor: pointer; transition: border-color 0.15s, color 0.15s; white-space: nowrap;
-    }
-    #btn-change-key:hover { border-color: #3b82f6; color: #93c5fd; }
 
     /* ── Map container ───────────────────────────────────────────────── */
     #map-container { flex: 1; position: relative; overflow: hidden; min-height: 0; }
@@ -248,7 +242,6 @@
     Heatmap
   </label>
 
-  <button id="btn-change-key">Change API key&hellip;</button>
 </div>
 
 <div id="map-container">
@@ -397,11 +390,6 @@
 
   $keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') $btnSave.click(); });
 
-  document.getElementById('btn-change-key').addEventListener('click', async () => {
-    await fetch('/api/clear-key', { method: 'POST' });
-    resetState();
-    showGate();
-  });
 
   function resetState() {
     countyData = {}; popeyesData = null; kfcData = null;
