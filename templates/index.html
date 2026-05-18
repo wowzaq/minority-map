@@ -488,18 +488,23 @@
     renderLegend();
 
     // ── D3 Zoom ────────────────────────────────────────────────────────
+    let lastScale = 1;
+
     const zoomBehavior = d3.zoom()
       .scaleExtent([1, 16])
       .on('start', () => { isDragging = true; svg.classed('dragging', true); })
       .on('zoom', event => {
         currentZoom = event.transform;
         g.attr('transform', currentZoom);
-        // Thin strokes as you zoom in
         const s = currentZoom.k;
-        g.selectAll('.county').style('stroke-width', (0.25 / s) + 'px');
-        g.select('.state-mesh').style('stroke-width', (0.7 / s) + 'px');
-        g.selectAll('.popeyes-dot').attr('r', 3 / Math.sqrt(s));
-        g.selectAll('.kfc-dot').attr('r', 3 / Math.sqrt(s));
+        // Only do expensive DOM updates when scale actually changed (not during pan)
+        if (s !== lastScale) {
+          lastScale = s;
+          g.selectAll('.county').style('stroke-width', (0.25 / s) + 'px');
+          g.select('.state-mesh').style('stroke-width', (0.7 / s) + 'px');
+          g.selectAll('.popeyes-dot').attr('r', 3 / Math.sqrt(s));
+          g.selectAll('.kfc-dot').attr('r', 3 / Math.sqrt(s));
+        }
         if (heatmapVisible) drawHeatmap();
       })
       .on('end', () => { isDragging = false; svg.classed('dragging', false); });
